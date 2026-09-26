@@ -170,13 +170,13 @@ $env:CLANK_RPC_URL = "https://rpc.mainnet.chain.robinhood.com"
 
 That RPC is already the default.
 
-## What never leaves your machine
+## What stays on your machine
 
-The bottom line of the home screen is the rule the app follows:
+For this CLI, the accurate statement is this. The private key is used only to sign on the machine where the CLI is installed. It is not written to disk, and it is not sent anywhere. The coin image and the signed transaction still have to be sent to clank.trade and Robinhood Chain for the coin to be created. No third party can read the key. That does not mean no data leaves the machine.
+
+The home screen shortens the same point to one line:
 
 > Runs locally on your machine. Your key stays here. No third party can read it.
-
-The private key is used only to sign on this computer. It is not uploaded, not written into the project, and not stored for the next run. What goes out is a signature and the already-signed launch transaction.
 
 ## If something fails
 
