@@ -1,6 +1,7 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { LOGO, PORTRAIT } from "./art.js";
+import { LOGO } from "./art.js";
+import { PORTRAIT_H, PORTRAIT_ROWS, PORTRAIT_W } from "./portrait.js";
 import { eth, publicClient } from "./chain.js";
 import { accountFromKey, launchCoin } from "./launch.js";
 
@@ -13,11 +14,46 @@ let wallet = null;
 let balanceText = "";
 
 function short(address) {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function rgbAt(px, py, cols, pixelRows) {
+  const sx = Math.min(PORTRAIT_W - 1, Math.floor(((px + 0.5) * PORTRAIT_W) / cols));
+  const sy = Math.min(PORTRAIT_H - 1, Math.floor(((py + 0.5) * PORTRAIT_H) / pixelRows));
+  const hex = PORTRAIT_ROWS[sy].slice(sx * 6, sx * 6 + 6);
+  return `${parseInt(hex.slice(0, 2), 16)};${parseInt(hex.slice(2, 4), 16)};${parseInt(hex.slice(4, 6), 16)}`;
+}
+
+function portraitSize() {
+  const width = output.columns || 120;
+  const height = output.rows || 44;
+  const menuW = 36;
+  const side = width >= 108;
+  const maxCols = Math.min(84, side ? width - menuW - 3 : width - 2);
+  const maxRows = Math.max(22, height - 8);
+  const cols = Math.max(48, maxCols);
+  const rows = Math.max(24, Math.min(maxRows, Math.round(cols / 2)));
+  return { cols, rows, side };
+}
+
+function portraitLines(cols, rows) {
+  const pixelRows = rows * 2;
+  const lines = [];
+  for (let y = 0; y < rows; y += 1) {
+    let line = "";
+    for (let x = 0; x < cols; x += 1) {
+      const top = rgbAt(x, y * 2, cols, pixelRows);
+      const bot = rgbAt(x, y * 2 + 1, cols, pixelRows);
+      line += `\x1b[38;2;${top}m\x1b[48;2;${bot}m\u2580`;
+    }
+    lines.push(`${line}${RESET}`);
+  }
+  return lines;
 }
 
 function paint(selected, note) {
-  const wide = (output.columns || 80) >= 96;
+  const { cols, rows, side } = portraitSize();
+  const portrait = portraitLines(cols, rows);
   output.write(`\x1b[2J\x1b[H${RESET}`);
   for (const line of LOGO) output.write(`${PURPLE}${line}${RESET}\n`);
   output.write("\n");
@@ -38,18 +74,16 @@ function paint(selected, note) {
     `${DIM}up/down select    Enter    q quit${RESET}`,
   ];
 
-  if (!wide) {
-    for (const line of PORTRAIT) output.write(`${line}\n`);
+  if (!side) {
+    for (const line of portrait) output.write(`${line}\n`);
     output.write("\n");
     for (const line of menu) output.write(`${line}\n`);
     return;
   }
 
-  const height = Math.max(PORTRAIT.length, menu.length);
+  const height = Math.max(portrait.length, menu.length);
   for (let i = 0; i < height; i += 1) {
-    const left = PORTRAIT[i] ?? "";
-    const right = menu[i] ?? "";
-    output.write(`${left}${RESET}  ${right}\n`);
+    output.write(`${portrait[i] ?? ""}${RESET}  ${menu[i] ?? ""}\n`);
   }
 }
 
