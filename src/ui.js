@@ -34,12 +34,15 @@ function clip(text, width) {
 function menuLines(selected, note) {
   const address = wallet ? short(wallet.account.address) : "not connected";
   const balance = wallet ? balanceText || "..." : "-";
-  return [
+  const lines = [
     `${HOT}CLANK${RESET}`,
     `${DIM}Launch a coin on clank.trade${RESET}`,
     "",
     row(0, selected, "Connect wallet"),
     row(1, selected, "Launch token"),
+  ];
+  if (wallet) lines.push(row(2, selected, "Log out"));
+  lines.push(
     "",
     `${DIM}Wallet${RESET}`,
     `  ${wallet ? HOT : DIM}${address}${RESET}`,
@@ -49,7 +52,8 @@ function menuLines(selected, note) {
     note ? `${HOT}${clip(note, PANEL_W - 2)}${RESET}` : "",
     "",
     `${DIM}up/down    enter    q${RESET}`,
-  ];
+  );
+  return lines;
 }
 
 function paint(selected, note) {
@@ -227,25 +231,24 @@ function decodeKeys(buf) {
   return keys;
 }
 
-function actionFromKey(key, allowSkip) {
+function actionFromKey(key, { allowSkip, allowBack }) {
   if (key.vk) {
     if (!key.down) return null;
-    if ((key.control & 0x000c) && key.vk === 67) return "quit";
+    const ctrl = key.control & 0x000c;
+    if (ctrl && key.vk === 67) return "quit";
+    if (key.vk === 27) return "home";
+    if (ctrl && key.vk === 81) return allowBack ? "back" : null;
     if (key.vk === 16 || key.vk === 160 || key.vk === 161) return allowSkip ? "skip" : null;
-    if (key.vk === 84) return "back";
-    if (key.vk === 81) return "home";
     if (key.vk === 13) return "next";
     if (key.vk === 8) return "backspace";
-    if (key.unicode >= 32 && key.vk !== 84 && key.vk !== 81) {
-      return { type: "text", char: String.fromCharCode(key.unicode) };
-    }
+    if (key.unicode >= 32) return { type: "text", char: String.fromCharCode(key.unicode) };
     return null;
   }
   const plain = key.plain;
   if (!plain) return null;
   if (plain === "\u0003") return "quit";
-  if (plain === "t" || plain === "T") return "back";
-  if (plain === "q" || plain === "Q") return "home";
+  if (plain === "\u001b") return "home";
+  if (plain === "\u0011") return allowBack ? "back" : null;
   if (plain === "\r" || plain === "\n") return "next";
   if (plain === "\b" || plain === "\u007f") return "backspace";
   if (allowSkip && (plain === "\u0010" || plain === "\u001b[16;2u")) return "skip";
@@ -253,31 +256,35 @@ function actionFromKey(key, allowSkip) {
   return null;
 }
 
-async function readActions(allowSkip) {
+async function readActions(options) {
   const buf = await readInputChunk();
   if (!buf.includes("\u001b") && buf.length > 1) {
     return [...buf.replace(/[\u0000-\u001f]/g, "")].map((char) => ({ type: "text", char }));
   }
-  return decodeKeys(buf).map((key) => actionFromKey(key, allowSkip)).filter(Boolean);
+  return decodeKeys(buf).map((key) => actionFromKey(key, options)).filter(Boolean);
 }
 
-async function askStep({ title, subtitle, label, value, secret, step, total, allowSkip, fixed }) {
+function placeInputCursor(typedLength) {
+  output.write(`\x1b[7;${6 + typedLength}H\x1b[?25h`);
+}
+
+async function askStep({ title, subtitle, label, value, secret, step, total, allowSkip, allowBack, fixed }) {
   let text = fixed ? "0" : value ?? "";
   enableDirectKeys(true);
   try {
     while (true) {
       openScreen(title, `${subtitle}    step ${step} of ${total}`);
-      const shown = secret ? "*".repeat(Math.min(text.length, 48)) : text;
+      const typed = secret ? "*".repeat(Math.min(text.length, 48)) : text;
       output.write(`  ${DIM}${label}${RESET}\n`);
-      output.write(`  ${PURPLE}>${RESET}  ${HOT}${shown || `${DIM}type here`}${RESET}\n\n`);
-      output.write(`  ${DIM}T back    Q home${RESET}\n`);
+      output.write(`  ${PURPLE}>${RESET}  ${typed ? `${HOT}${typed}` : `${DIM}type here`}${RESET}\n\n`);
+      output.write(`  ${DIM}Esc home${allowBack ? "    Ctrl+Q back" : ""}${RESET}\n`);
       if (allowSkip) output.write(`  ${DIM}Press Shift to skip this step.${RESET}\n`);
       if (fixed) output.write(`  ${DIM}ETH to buy stays 0.${RESET}\n`);
-      drainInput();
-      const actions = await readActions(allowSkip);
+      placeInputCursor(typed.length);
+      const actions = await readActions({ allowSkip, allowBack });
       for (const action of actions) {
         if (action === "quit") return { action: "quit", value: text };
-        if (action === "back") return { action: "back", value: text };
+        if (action === "back" && allowBack) return { action: "back", value: text };
         if (action === "home") return { action: "home", value: text };
         if (action === "skip") return { action: "skip", value: fixed ? "0" : "" };
         if (action === "next") return { action: "next", value: (fixed ? "0" : text).trim() };
@@ -287,18 +294,19 @@ async function askStep({ title, subtitle, label, value, secret, step, total, all
     }
   } finally {
     enableDirectKeys(false);
+    output.write("\x1b[?25l");
   }
 }
 
-async function waitKeys() {
-  output.write(`\n  ${DIM}T back    Q home${RESET}\n`);
+async function waitKeys(allowBack) {
+  output.write(`\n  ${DIM}Esc home${allowBack ? "    Ctrl+Q back" : ""}${RESET}\n`);
   enableDirectKeys(true);
   try {
     while (true) {
-      const actions = await readActions(false);
+      const actions = await readActions({ allowSkip: false, allowBack });
       for (const action of actions) {
         if (action === "quit") return "quit";
-        if (action === "back") return "back";
+        if (action === "back" && allowBack) return "back";
         if (action === "home") return "home";
       }
     }
@@ -331,10 +339,11 @@ async function connect() {
       secret: true,
       step: 1,
       total: 1,
+      allowBack: false,
     });
     draft = step.value;
     if (step.action === "quit") return "__quit__";
-    if (step.action === "back" || step.action === "home") return "Connect cancelled.";
+    if (step.action === "home") return "Connect cancelled.";
     if (!draft) continue;
     openScreen("Connect wallet", "Checking connection");
     output.write("\n");
@@ -343,10 +352,9 @@ async function connect() {
       return "private key accepted";
     });
     if (!keyCheck.ok) {
-      const next = await waitKeys();
+      const next = await waitKeys(false);
       if (next === "quit") return "__quit__";
-      if (next === "home") return "Connect cancelled.";
-      continue;
+      return "Connect cancelled.";
     }
     const opened = accountFromKey(draft);
     const chainCheck = await checkLine("clank chain ping --id 4663", async () => {
@@ -360,21 +368,15 @@ async function connect() {
     });
     if (!chainCheck.ok || !balanceCheck.ok) {
       output.write(`  ${DIM}Connection failed.${RESET}\n`);
-      const next = await waitKeys();
+      const next = await waitKeys(false);
       if (next === "quit") return "__quit__";
-      if (next === "home") return "Connect cancelled.";
-      continue;
+      return "Connect cancelled.";
     }
     wallet = opened;
     balanceText = balanceCheck.detail;
     output.write(`  ${HOT}Connection successful.${RESET}\n`);
-    const next = await waitKeys();
+    const next = await waitKeys(false);
     if (next === "quit") return "__quit__";
-    if (next === "back") {
-      wallet = null;
-      balanceText = "";
-      continue;
-    }
     return `Connected ${short(opened.account.address)}`;
   }
 }
@@ -402,6 +404,7 @@ async function launchForm() {
       step: index + 1,
       total: steps.length,
       allowSkip: current.id !== "confirm",
+      allowBack: true,
       fixed: Boolean(current.fixed),
     });
     if (step.action === "quit") return "__quit__";
@@ -442,15 +445,16 @@ async function launchForm() {
     if (result.txUrl) output.write(`  Tx     ${result.txUrl}\n`);
     if (result.reason) output.write(`  ${result.reason}\n`);
     if (result.sent) output.write(`  ${HOT}Launch successful.${RESET}\n`);
-    const next = await waitKeys();
+    const next = await waitKeys(true);
     if (next === "quit") return "__quit__";
     if (next === "back") return "Returned to launch.";
     return result.sent ? "Launch is onchain." : result.reason || "Transaction was not sent.";
   } catch (error) {
     const message = error?.shortMessage || error?.message || String(error);
     output.write(`\n  ${message}\n`);
-    const next = await waitKeys();
+    const next = await waitKeys(true);
     if (next === "quit") return "__quit__";
+    if (next === "back") return "Returned to launch.";
     return message;
   }
 }
@@ -468,21 +472,38 @@ async function home() {
   }
   await refreshBalance();
   while (true) {
+    const count = wallet ? 3 : 2;
+    if (selected >= count) selected = count - 1;
     paint(selected, note);
     const key = await readKey();
     if (key === "\u0003" || key === "q" || key === "Q") return;
-    if (key === "\u001b[A" || key === "k") selected = 0;
-    else if (key === "\u001b[B" || key === "j") selected = 1;
-    else if (key === "1" || ((key === "\r" || key === "\n") && selected === 0)) {
+    let activate = false;
+    if (key === "\u001b[A" || key === "k") selected = Math.max(0, selected - 1);
+    else if (key === "\u001b[B" || key === "j") selected = Math.min(count - 1, selected + 1);
+    else if (key === "1") {
       selected = 0;
+      activate = true;
+    } else if (key === "2") {
+      selected = 1;
+      activate = true;
+    } else if (key === "3" && wallet) {
+      selected = 2;
+      activate = true;
+    } else if (key === "\r" || key === "\n") activate = true;
+    if (!activate) continue;
+    if (selected === 0) {
       note = await connect();
       if (note === "__quit__") return;
       await refreshBalance();
-    } else if (key === "2" || ((key === "\r" || key === "\n") && selected === 1)) {
-      selected = 1;
+    } else if (selected === 1) {
       note = await launchForm();
       if (note === "__quit__") return;
       await refreshBalance();
+    } else {
+      wallet = null;
+      balanceText = "";
+      note = "Logged out.";
+      selected = 0;
     }
   }
 }
