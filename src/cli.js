@@ -3,33 +3,35 @@ import { parseArgs } from "node:util";
 import { formatEther } from "viem";
 import { eth } from "./chain.js";
 import { accountFromEnv, launchCoin, readPlatform } from "./launch.js";
+import { openUi } from "./ui.js";
 
-const help = `clank-trade — launch coin trên clank.trade (Robinhood Chain, chain 4663)
+const help = `clank-trade — launch a coin on clank.trade (Robinhood Chain, chain 4663)
 
-Cách dùng:
+Usage:
+  clank-trade
   clank-trade status
   clank-trade address
-  clank-trade launch --name "Tên coin" --symbol TICKER --image .\\logo.png
-  clank-trade launch --name "Tên coin" --symbol TICKER --logo ipfs://... --yes
+  clank-trade launch --name "Coin name" --symbol TICKER --image .\\logo.png
+  clank-trade launch --name "Coin name" --symbol TICKER --logo ipfs://... --yes
 
-Tùy chọn launch:
-  --name          Tên coin, tối đa 64 byte
-  --symbol        Ticker, tối đa 16 byte
-  --image         Ảnh PNG, JPEG hoặc WebP, tối đa 2 MB
-  --logo          URL ảnh sẵn (ipfs:// hoặc https://), dùng thay --image
-  --twitter       Link X, không bắt buộc
-  --website       Link website, không bắt buộc
-  --description   Mô tả, không bắt buộc
-  --buy           ETH mua ngay khi launch, ví dụ 0.01
-  --min-tokens    Số token tối thiểu nhận về khi có --buy. Mặc định 0
-  --salt          bytes32 cố định, không bắt buộc
-  --yes           Gửi giao dịch. Không có cờ này thì chỉ mô phỏng
+Launch options:
+  --name          Coin name, 64 bytes max
+  --symbol        Ticker, 16 bytes max
+  --image         PNG, JPEG, or WebP, 2 MB max
+  --logo          Existing image URL (ipfs:// or https://), instead of --image
+  --twitter       X link, optional
+  --website       Website link, optional
+  --description   Description, optional
+  --buy           ETH to buy at launch, for example 0.01
+  --min-tokens    Minimum tokens out when using --buy. Default 0
+  --salt          Fixed bytes32, optional
+  --yes           Send the transaction. Without this flag the command only simulates
 
-Biến môi trường:
-  CLANK_PRIVATE_KEY   Private key ví trả gas, dạng 0x + 64 hex
-  CLANK_RPC_URL       RPC Robinhood Chain. Mặc định rpc.mainnet.chain.robinhood.com
+Environment:
+  CLANK_PRIVATE_KEY   Wallet private key that pays gas, 0x plus 64 hex characters
+  CLANK_RPC_URL       Robinhood Chain RPC. Default rpc.mainnet.chain.robinhood.com
 
-Khóa ví chỉ đọc từ môi trường và không được in ra.
+The wallet key is read from the environment and is never printed.
 `;
 
 function fail(error) {
@@ -41,15 +43,15 @@ function fail(error) {
 async function status() {
   const platform = await readPlatform();
   const lines = [
-    `Mạng: Robinhood Chain (${platform.chainId})`,
+    `Network: Robinhood Chain (${platform.chainId})`,
     `Factory: ${platform.factory}`,
     `Launch config: ${platform.launchConfigId}`,
-    `Launch đang bật: ${platform.enabled ? "có" : "không"}`,
-    `Config đang bật: ${platform.launchConfig.enabled ? "có" : "không"}`,
-    `Phí launch khi mua kèm: ${eth(platform.fee)}`,
-    `Phí curve: ${platform.launchConfig.curveFeeBps} bps`,
+    `Launch enabled: ${platform.enabled ? "yes" : "no"}`,
+    `Config enabled: ${platform.launchConfig.enabled ? "yes" : "no"}`,
+    `Launch fee when buying: ${eth(platform.fee)}`,
+    `Curve fee: ${platform.launchConfig.curveFeeBps} bps`,
     `Supply: ${formatEther(platform.launchConfig.supply)}`,
-    `Ngưỡng graduation: ${formatEther(platform.launchConfig.graduationThreshold)} ETH`,
+    `Graduation threshold: ${formatEther(platform.launchConfig.graduationThreshold)} ETH`,
     `Quote: ${platform.config.quoteToken}`,
   ];
   process.stdout.write(`${lines.join("\n")}\n`);
@@ -80,27 +82,31 @@ async function launch(values) {
     yes: values.yes === true,
   });
   const lines = [
-    `Ví: ${result.wallet}`,
+    `Wallet: ${result.wallet}`,
     `Coin: ${result.name} ($${result.symbol})`,
     `Logo: ${result.logo}`,
-    `Token dự kiến: ${result.token}`,
-    `Curve dự kiến: ${result.curve}`,
-    `Trang: ${result.coinUrl}`,
-    `Mua kèm: ${result.buy}`,
-    `Value giao dịch: ${result.value}`,
-    `Số dư: ${result.balance}`,
+    `Predicted token: ${result.token}`,
+    `Predicted curve: ${result.curve}`,
+    `Page: ${result.coinUrl}`,
+    `Initial buy: ${result.buy}`,
+    `Transaction value: ${result.value}`,
+    `Balance: ${result.balance}`,
   ];
   if (result.gas) lines.push(`Gas limit: ${result.gas}`);
   if (result.hash) lines.push(`Tx: ${result.txUrl}`);
   if (result.reason) lines.push(result.reason);
-  if (result.sent) lines.push("Launch đã lên chain.");
+  if (result.sent) lines.push("Launch is onchain.");
   process.stdout.write(`${lines.join("\n")}\n`);
   if (!result.sent && result.simulated === false) process.exitCode = 1;
 }
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
-  if (!command || command === "--help" || command === "-h" || command === "help") {
+  if (!command) {
+    await openUi();
+    return;
+  }
+  if (command === "--help" || command === "-h" || command === "help") {
     process.stdout.write(help);
     return;
   }
@@ -131,15 +137,15 @@ async function main() {
       strict: true,
     });
     if (!values.image && !values.logo) {
-      throw new Error("Cần --image hoặc --logo.");
+      throw new Error("Provide --image or --logo.");
     }
     if (values.image && values.logo) {
-      throw new Error("Chỉ dùng một trong --image hoặc --logo.");
+      throw new Error("Use only one of --image or --logo.");
     }
     await launch(values);
     return;
   }
-  throw new Error(`Lệnh không rõ: ${command}\n\n${help}`);
+  throw new Error(`Unknown command: ${command}\n\n${help}`);
 }
 
 main().catch(fail);

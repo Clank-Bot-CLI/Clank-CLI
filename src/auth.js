@@ -61,7 +61,7 @@ export async function signIn(account) {
     method: "POST",
     json: {},
   });
-  if (!nonce) throw new Error("Không lấy được nonce đăng nhập.");
+  if (!nonce) throw new Error("Could not get a sign-in nonce.");
 
   const message = createSiweMessage({
     address: account.address,
@@ -81,7 +81,7 @@ export async function signIn(account) {
   });
   const session = await authFetch(jar, `${API_ORIGIN}/v1/session`);
   if (!session?.address || session.address.toLowerCase() !== account.address.toLowerCase()) {
-    throw new Error("Phiên đăng nhập không khớp ví.");
+    throw new Error("Sign-in session does not match this wallet.");
   }
   return { jar, session, token: verified?.token };
 }
@@ -93,7 +93,7 @@ export async function uploadImage(jar, bytes, contentType) {
     contentType,
   });
   if (!data?.url || typeof data.url !== "string") {
-    throw new Error("Máy chủ không trả về URL ảnh.");
+    throw new Error("The server did not return an image URL.");
   }
   return data.url;
 }

@@ -22,11 +22,11 @@ export function publicClient() {
 export async function platformConfig() {
   const response = await fetch(`${API_ORIGIN}/v1/config`);
   if (!response.ok) {
-    throw new Error(`Không đọc được cấu hình clank.trade (${response.status}).`);
+    throw new Error(`Could not read clank.trade config (${response.status}).`);
   }
   const config = await response.json();
   if (config.chainId !== robinhood.id) {
-    throw new Error(`Chain ID không khớp: ${config.chainId}.`);
+    throw new Error(`Chain ID does not match: ${config.chainId}.`);
   }
   return config;
 }

@@ -25,8 +25,8 @@ function utf8Length(value) {
 function requireField(label, value, max, { required = false } = {}) {
   const text = value ?? "";
   const size = utf8Length(text);
-  if (required && size === 0) throw new Error(`${label} là bắt buộc.`);
-  if (size > max) throw new Error(`${label} dài ${size} byte, tối đa ${max}.`);
+  if (required && size === 0) throw new Error(`${label} is required.`);
+  if (size > max) throw new Error(`${label} is ${size} bytes; the maximum is ${max}.`);
   return text;
 }
 
@@ -50,18 +50,24 @@ function imageType(bytes) {
   ) {
     return "image/webp";
   }
-  throw new Error("Ảnh phải là PNG, JPEG hoặc WebP.");
+  throw new Error("Image must be PNG, JPEG, or WebP.");
+}
+
+export function accountFromKey(key) {
+  const trimmed = key?.trim() ?? "";
+  const normalized = /^[0-9a-fA-F]{64}$/.test(trimmed) ? `0x${trimmed}` : trimmed;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(normalized)) {
+    throw new Error("Private key must be 0x followed by 64 hex characters.");
+  }
+  return { account: privateKeyToAccount(normalized), privateKey: normalized };
 }
 
 export function accountFromEnv() {
   const key = process.env.CLANK_PRIVATE_KEY?.trim();
   if (!key) {
-    throw new Error("Thiếu CLANK_PRIVATE_KEY. Đặt khóa ví dạng 0x... trong môi trường, không ghi vào file dự án.");
+    throw new Error("Missing CLANK_PRIVATE_KEY. Set a 0x wallet key in the environment. Do not write it into the project.");
   }
-  if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    throw new Error("CLANK_PRIVATE_KEY phải là private key hex 32 byte.");
-  }
-  return privateKeyToAccount(key);
+  return accountFromKey(key).account;
 }
 
 function randomSalt() {
@@ -126,24 +132,28 @@ export async function readPlatform() {
 }
 
 export async function launchCoin(options) {
-  const name = requireField("Tên coin", options.name?.trim(), LIMITS.name, { required: true });
+  const name = requireField("Coin name", options.name?.trim(), LIMITS.name, { required: true });
   const symbol = requireField("Ticker", options.symbol?.trim().toUpperCase(), LIMITS.symbol, {
     required: true,
   });
-  const description = requireField("Mô tả", options.description?.trim() ?? "", LIMITS.description);
+  const description = requireField("Description", options.description?.trim() ?? "", LIMITS.description);
   const twitter = requireField("Twitter", options.twitter?.trim() ?? "", LIMITS.social);
   const website = requireField("Website", options.website?.trim() ?? "", LIMITS.social);
   const buyText = (options.buy ?? "").trim();
   const quoteIn = buyText ? parseEther(buyText) : 0n;
-  if (quoteIn < 0n) throw new Error("Số ETH mua ban đầu không hợp lệ.");
+  if (quoteIn < 0n) throw new Error("Initial buy amount is invalid.");
   const minTokensOut = options.minTokens ? parseEther(options.minTokens) : 0n;
 
-  const account = accountFromEnv();
+  const account = options.privateKey ? accountFromKey(options.privateKey).account : accountFromEnv();
+  const say = (text) => {
+    if (options.onStatus) options.onStatus(text);
+    else process.stdout.write(`${text}\n`);
+  };
   const platform = await readPlatform();
   const { client, factory, launchConfigId } = platform;
-  if (!platform.enabled) throw new Error("Factory đang tắt launch.");
-  if (platform.chainId !== robinhood.id) throw new Error(`RPC không phải Robinhood Chain (${platform.chainId}).`);
-  if (!platform.launchConfig.enabled) throw new Error("Launch config đang tắt.");
+  if (!platform.enabled) throw new Error("The factory is not launching.");
+  if (platform.chainId !== robinhood.id) throw new Error(`RPC is not Robinhood Chain (${platform.chainId}).`);
+  if (!platform.launchConfig.enabled) throw new Error("This launch config is disabled.");
 
   const allowed = await client.readContract({
     address: factory,
@@ -151,18 +161,18 @@ export async function launchCoin(options) {
     functionName: "canLaunch",
     args: [account.address],
   });
-  if (!allowed) throw new Error(`Ví ${account.address} chưa được phép launch trên factory này.`);
+  if (!allowed) throw new Error(`Wallet ${account.address} is not allowed to launch on this factory.`);
 
   let logo = options.logo?.trim() ?? "";
   if (options.image) {
     const bytes = new Uint8Array(await readFile(options.image));
     if (bytes.length === 0 || bytes.length > LIMITS.imageBytes) {
-      throw new Error("Ảnh phải nhỏ hơn hoặc bằng 2 MB.");
+      throw new Error("Image must be 2 MB or smaller.");
     }
     const contentType = imageType(bytes);
-    process.stdout.write("Đang đăng nhập clank.trade…\n");
+    say("Signing in to clank.trade...");
     const session = await signIn(account);
-    process.stdout.write("Đang tải ảnh lên…\n");
+    say("Uploading image...");
     logo = await uploadImage(session.jar, bytes, contentType);
   }
   logo = requireField("Logo", logo, LIMITS.logo, { required: true });
@@ -194,7 +204,7 @@ export async function launchCoin(options) {
   );
   const saved = (await readAttempts())[fingerprint];
   const salt = options.salt || saved?.salt || randomSalt();
-  if (!/^0x[0-9a-fA-F]{64}$/.test(salt)) throw new Error("Salt phải là bytes32 hex.");
+  if (!/^0x[0-9a-fA-F]{64}$/.test(salt)) throw new Error("Salt must be a bytes32 hex value.");
 
   const params = buildParams({
     name,
@@ -251,7 +261,7 @@ export async function launchCoin(options) {
 
   if (summary.alreadyLive) {
     await writeAttempt(fingerprint, { salt, token, curve, logo, done: true });
-    return { ...summary, sent: false, reason: "Coin với salt này đã có trên chain." };
+    return { ...summary, sent: false, reason: "A coin with this salt is already onchain." };
   }
 
   let gas;
@@ -266,13 +276,13 @@ export async function launchCoin(options) {
 
   if (!options.yes) {
     await writeAttempt(fingerprint, { salt, token, curve, logo, done: false });
-    return { ...summary, sent: false, salt, reason: "Dry-run. Thêm --yes để gửi giao dịch." };
+    return { ...summary, sent: false, salt, reason: "Dry run. Add --yes to send the transaction." };
   }
   const fees = await client.estimateFeesPerGas();
   const maxFee = fees.maxFeePerGas ?? fees.gasPrice ?? 0n;
   const required = value + summary.gas * maxFee;
   if (balance < required) {
-    throw new Error(`Ví không đủ ETH cho value và gas. Cần khoảng ${eth(required)}, đang có ${eth(balance)}.`);
+    throw new Error(`Not enough ETH for value and gas. Need about ${eth(required)}, balance is ${eth(balance)}.`);
   }
 
   const { createWalletClient } = await import("viem");
@@ -284,7 +294,7 @@ export async function launchCoin(options) {
   });
   const hash = await wallet.writeContract({ ...request, gas: summary.gas });
   await writeAttempt(fingerprint, { salt, token, curve, logo, hash, done: false });
-  process.stdout.write(`Đã gửi ${hash}. Đang chờ xác nhận…\n`);
+  say(`Sent ${hash}. Waiting for confirmation...`);
   const receipt = await client.waitForTransactionReceipt({ hash, timeout: 60_000 });
   let launchedToken = token;
   for (const log of receipt.logs) {
@@ -293,12 +303,12 @@ export async function launchCoin(options) {
       const decoded = decodeEventLog({ abi, eventName: "TokenLaunched", topics: log.topics, data: log.data });
       launchedToken = decoded.args.token;
     } catch {
-      // log khác của factory
+      // other factory log
     }
   }
   await writeAttempt(fingerprint, { salt, token: launchedToken, curve, logo, hash, done: receipt.status === "success" });
   if (receipt.status !== "success") {
-    throw new Error(`Giao dịch revert: ${EXPLORER}/tx/${hash}`);
+    throw new Error(`Transaction reverted: ${EXPLORER}/tx/${hash}`);
   }
   return {
     ...summary,
