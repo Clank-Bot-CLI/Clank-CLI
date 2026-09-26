@@ -1,9 +1,9 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { LOGO } from "./art.js";
-import { PORTRAIT_H, PORTRAIT_ROWS, PORTRAIT_W } from "./portrait.js";
 import { eth, publicClient } from "./chain.js";
 import { accountFromKey, launchCoin } from "./launch.js";
+import { portraitImage } from "./sixel.js";
 
 const PURPLE = "\x1b[38;2;186;140;255m";
 const DIM = "\x1b[38;2;150;140;170m";
@@ -17,48 +17,11 @@ function short(address) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-function rgbAt(px, py, cols, pixelRows) {
-  const sx = Math.min(PORTRAIT_W - 1, Math.floor(((px + 0.5) * PORTRAIT_W) / cols));
-  const sy = Math.min(PORTRAIT_H - 1, Math.floor(((py + 0.5) * PORTRAIT_H) / pixelRows));
-  const hex = PORTRAIT_ROWS[sy].slice(sx * 6, sx * 6 + 6);
-  return `${parseInt(hex.slice(0, 2), 16)};${parseInt(hex.slice(2, 4), 16)};${parseInt(hex.slice(4, 6), 16)}`;
-}
+let picture = null;
+const imageRow = 8;
 
-function portraitSize() {
-  const width = output.columns || 120;
-  const height = output.rows || 44;
-  const menuW = 36;
-  const side = width >= 108;
-  const maxCols = Math.min(84, side ? width - menuW - 3 : width - 2);
-  const maxRows = Math.max(22, height - 8);
-  const cols = Math.max(48, maxCols);
-  const rows = Math.max(24, Math.min(maxRows, Math.round(cols / 2)));
-  return { cols, rows, side };
-}
-
-function portraitLines(cols, rows) {
-  const pixelRows = rows * 2;
-  const lines = [];
-  for (let y = 0; y < rows; y += 1) {
-    let line = "";
-    for (let x = 0; x < cols; x += 1) {
-      const top = rgbAt(x, y * 2, cols, pixelRows);
-      const bot = rgbAt(x, y * 2 + 1, cols, pixelRows);
-      line += `\x1b[38;2;${top}m\x1b[48;2;${bot}m\u2580`;
-    }
-    lines.push(`${line}${RESET}`);
-  }
-  return lines;
-}
-
-function paint(selected, note) {
-  const { cols, rows, side } = portraitSize();
-  const portrait = portraitLines(cols, rows);
-  output.write(`\x1b[2J\x1b[H${RESET}`);
-  for (const line of LOGO) output.write(`${PURPLE}${line}${RESET}\n`);
-  output.write("\n");
-
-  const menu = [
+function menuLines(selected, note) {
+  return [
     `${DIM}Launch a coin on clank.trade${RESET}`,
     "",
     row(0, selected, "1  Connect wallet"),
@@ -73,17 +36,27 @@ function paint(selected, note) {
     "",
     `${DIM}up/down select    Enter    q quit${RESET}`,
   ];
+}
 
+function paint(selected, note) {
+  const menu = menuLines(selected, note);
+  output.write(`\x1b[2J\x1b[H${RESET}`);
+  for (const line of LOGO) output.write(`${PURPLE}${line}${RESET}\n`);
+  output.write("\n");
+  if (!picture) {
+    for (const line of menu) output.write(`${line}\n`);
+    return;
+  }
+  const side = (output.columns || 100) >= picture.cols + 36;
+  output.write(picture.sixel);
   if (!side) {
-    for (const line of portrait) output.write(`${line}\n`);
     output.write("\n");
     for (const line of menu) output.write(`${line}\n`);
     return;
   }
-
-  const height = Math.max(portrait.length, menu.length);
-  for (let i = 0; i < height; i += 1) {
-    output.write(`${portrait[i] ?? ""}${RESET}  ${menu[i] ?? ""}\n`);
+  const col = picture.cols + 3;
+  for (let i = 0; i < menu.length; i += 1) {
+    output.write(`\x1b[${imageRow + i};${col}H${menu[i]}${RESET}`);
   }
 }
 
@@ -267,6 +240,43 @@ async function home() {
   }
 }
 
+function askTerminal(sequence) {
+  return new Promise((resolve) => {
+    let buf = "";
+    const timer = setTimeout(finish, 200);
+    function finish() {
+      clearTimeout(timer);
+      input.off("data", onData);
+      if (input.isTTY) input.setRawMode(false);
+      resolve(buf);
+    }
+    function onData(chunk) {
+      buf += chunk;
+      if (buf.length > 80 || /[a-zA-Z]/.test(chunk)) finish();
+    }
+    input.setRawMode(true);
+    input.resume();
+    input.setEncoding("utf8");
+    input.on("data", onData);
+    output.write(sequence);
+  });
+}
+
+async function loadPicture() {
+  const cellReply = await askTerminal("\x1b[16t");
+  const cell = cellReply.match(/\x1b\[6;(\d+);(\d+)t/);
+  const cellH = Math.max(1, cell ? Number(cell[1]) : 20);
+  const cellW = Math.max(1, cell ? Number(cell[2]) : 10);
+  const maxPxH = Math.max(80, ((output.rows || 40) - 12) * cellH);
+  const maxPxW = Math.max(80, ((output.columns || 100) - 38) * cellW);
+  const image = portraitImage(maxPxW, maxPxH);
+  picture = {
+    sixel: image.sixel,
+    cols: Math.max(1, Math.ceil(image.width / cellW)),
+    rows: Math.max(1, Math.ceil(image.height / cellH)),
+  };
+}
+
 export async function openUi() {
   if (!input.isTTY || !output.isTTY) {
     output.write("Open a terminal and run clank-trade to open the screen.\n");
@@ -274,6 +284,7 @@ export async function openUi() {
   }
   output.write("\x1b[?1049h");
   try {
+    await loadPicture();
     await home();
   } finally {
     if (input.isTTY) {
