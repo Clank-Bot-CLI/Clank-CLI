@@ -2,7 +2,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { LOGO } from "./art.js";
 import { eth, publicClient } from "./chain.js";
 import { accountFromKey, launchCoin } from "./launch.js";
-import { portraitImage } from "./sixel.js";
+import { logoImage, portraitImage } from "./sixel.js";
 
 const PURPLE = "\x1b[38;2;186;140;255m";
 const DIM = "\x1b[38;2;150;140;170m";
@@ -20,6 +20,8 @@ const PANEL_W = 34;
 const GAP = 4;
 
 let picture = null;
+let cells = { w: 10, h: 20 };
+let mark = null;
 
 function place(row, col, text) {
   output.write(`\x1b[${row};${col}H${text}${RESET}`);
@@ -403,7 +405,18 @@ async function launchForm() {
   let index = 0;
   const draw = () => {
     openScreen("Launch token", short(wallet.account.address));
-    for (let i = 0; i < steps.length; i += 1) {
+    if (!mark) {
+      const edge = Math.min(210, 12 * cells.h);
+      const image = logoImage(edge, edge);
+      mark = {
+        sixel: image.sixel,
+        cols: Math.max(1, Math.ceil(image.width / cells.w)),
+        rows: Math.max(1, Math.ceil(image.height / cells.h)),
+      };
+    }
+    const columns = output.columns || 100;
+    const logoCol = Math.max(58, columns - mark.cols - 4);
+    for (let i = 0; i <= index; i += 1) {
       const step = steps[i];
       const active = i === index;
       const value = step.fixed ? "0" : draft[step.id];
@@ -415,6 +428,8 @@ async function launchForm() {
     }
     place(hintRow, 3, `${DIM}Esc home    Ctrl+Q back${RESET}`);
     place(hintRow + 1, 3, `${DIM}Press Shift to skip this step.${RESET}`);
+    const logoRow = Math.max(6, Math.floor((hintRow - mark.rows) / 2));
+    output.write(`\x1b[${logoRow};${logoCol}H${mark.sixel}`);
     const typed = steps[index].fixed ? "0" : draft[steps[index].id];
     output.write(`\x1b[${steps[index].valueRow};${6 + typed.length}H\x1b[?25h`);
   };
@@ -568,6 +583,7 @@ async function loadPicture() {
   const cell = cellReply.match(/\x1b\[6;(\d+);(\d+)t/);
   const cellH = Math.max(1, cell ? Number(cell[1]) : 20);
   const cellW = Math.max(1, cell ? Number(cell[2]) : 10);
+  cells = { w: cellW, h: cellH };
   const edge = Math.min(260, 22 * cellW, 16 * cellH);
   const image = portraitImage(edge, edge);
   picture = {
