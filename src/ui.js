@@ -276,10 +276,10 @@ async function askStep({ title, subtitle, label, value, secret, step, total, all
       openScreen(title, `${subtitle}    step ${step} of ${total}`);
       const typed = secret ? "*".repeat(Math.min(text.length, 48)) : text;
       output.write(`  ${DIM}${label}${RESET}\n`);
-      output.write(`  ${PURPLE}>${RESET}  ${typed ? `${HOT}${typed}` : `${DIM}type here`}${RESET}\n\n`);
-      output.write(`  ${DIM}Esc home${allowBack ? "    Ctrl+Q back" : ""}${RESET}\n`);
-      if (allowSkip) output.write(`  ${DIM}Press Shift to skip this step.${RESET}\n`);
-      if (fixed) output.write(`  ${DIM}ETH to buy stays 0.${RESET}\n`);
+      output.write(`  ${PURPLE}>${RESET}  ${typed ? `${HOT}${typed}` : `${DIM}type here`}${RESET}`);
+      place(18, 3, `${DIM}Esc home${allowBack ? "    Ctrl+Q back" : ""}${RESET}`);
+      if (allowSkip) place(19, 3, `${DIM}Press Shift to skip this step.${RESET}`);
+      if (fixed) place(20, 3, `${DIM}ETH to buy stays 0.${RESET}`);
       placeInputCursor(typed.length);
       const actions = await readActions({ allowSkip, allowBack });
       for (const action of actions) {
@@ -386,44 +386,77 @@ async function launchForm() {
   const steps = [
     { id: "name", label: "Coin name", required: true },
     { id: "symbol", label: "Ticker", required: true },
-    { id: "image", label: "Image path", required: true },
-    { id: "twitter", label: "Twitter", required: false, skip: true },
-    { id: "website", label: "Website", required: false, skip: true },
-    { id: "buy", label: "ETH to buy", fixed: true, skip: true },
+    { id: "image", label: "Image path", required: true, example: "C:\\Users\\ACER\\Downloads\\logo.png" },
+    { id: "twitter", label: "Twitter" },
+    { id: "website", label: "Website" },
+    { id: "buy", label: "ETH to buy", fixed: true },
     { id: "confirm", label: "Type YES to send", required: true },
   ];
   const draft = { name: "", symbol: "", image: "", twitter: "", website: "", buy: "0", confirm: "" };
+  let row = 6;
+  for (const step of steps) {
+    step.labelRow = row;
+    step.valueRow = row + 1;
+    row += step.example ? 4 : 3;
+  }
+  const hintRow = row + 6;
   let index = 0;
-  while (index < steps.length) {
-    const current = steps[index];
-    const step = await askStep({
-      title: "Launch token",
-      subtitle: short(wallet.account.address),
-      label: current.label,
-      value: current.fixed ? "0" : draft[current.id],
-      step: index + 1,
-      total: steps.length,
-      allowSkip: current.id !== "confirm",
-      allowBack: true,
-      fixed: Boolean(current.fixed),
-    });
-    if (step.action === "quit") return "__quit__";
-    if (step.action === "home") return "Returned home.";
-    if (step.action === "back") {
-      if (index === 0) return "Launch cancelled.";
-      index -= 1;
-      continue;
+  const draw = () => {
+    openScreen("Launch token", short(wallet.account.address));
+    for (let i = 0; i < steps.length; i += 1) {
+      const step = steps[i];
+      const active = i === index;
+      const value = step.fixed ? "0" : draft[step.id];
+      place(step.labelRow, 3, `${active ? HOT : DIM}${step.label}${RESET}`);
+      const marker = active ? `${PURPLE}>${RESET}` : `${DIM} ${RESET}`;
+      const body = value ? `${active ? HOT : DIM}${value}${RESET}` : active ? `${DIM}type here${RESET}` : "";
+      place(step.valueRow, 3, `${marker}  ${body}`);
+      if (step.example) place(step.valueRow + 1, 6, `${DIM}example  ${step.example}${RESET}`);
     }
-    if (step.action === "skip") {
-      draft[current.id] = current.fixed ? "0" : "";
-      index += 1;
-      continue;
+    place(hintRow, 3, `${DIM}Esc home    Ctrl+Q back${RESET}`);
+    place(hintRow + 1, 3, `${DIM}Press Shift to skip this step.${RESET}`);
+    const typed = steps[index].fixed ? "0" : draft[steps[index].id];
+    output.write(`\x1b[${steps[index].valueRow};${6 + typed.length}H\x1b[?25h`);
+  };
+  enableDirectKeys(true);
+  try {
+    while (index < steps.length) {
+      const current = steps[index];
+      draw();
+      const actions = await readActions({ allowSkip: current.id !== "confirm", allowBack: true });
+      let moved = false;
+      for (const action of actions) {
+        if (action === "quit") return "__quit__";
+        if (action === "home") return "Returned home.";
+        if (action === "back") {
+          if (index === 0) return "Launch cancelled.";
+          index -= 1;
+          moved = true;
+          break;
+        }
+        if (action === "skip") {
+          draft[current.id] = current.fixed ? "0" : "";
+          index += 1;
+          moved = true;
+          break;
+        }
+        if (action === "next") {
+          const value = current.fixed ? "0" : current.id === "symbol" ? draft[current.id].trim().toUpperCase() : draft[current.id].trim();
+          if (current.required && !value) break;
+          if (current.id === "confirm" && value.toUpperCase() !== "YES") break;
+          draft[current.id] = value;
+          index += 1;
+          moved = true;
+          break;
+        }
+        if (action === "backspace" && !current.fixed) draft[current.id] = draft[current.id].slice(0, -1);
+        else if (action?.type === "text" && !current.fixed) draft[current.id] += action.char;
+      }
+      if (moved) continue;
     }
-    const value = current.fixed ? "0" : current.id === "symbol" ? step.value.toUpperCase() : step.value;
-    if (current.required && !value) continue;
-    if (current.id === "confirm" && value.toUpperCase() !== "YES") continue;
-    draft[current.id] = value;
-    index += 1;
+  } finally {
+    enableDirectKeys(false);
+    output.write("\x1b[?25l");
   }
   openScreen("Launch token", "Sending");
   output.write("\n");
