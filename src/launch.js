@@ -6,7 +6,6 @@ import {
   getAddress,
   keccak256,
   parseAbi,
-  parseEther,
   toBytes,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -139,10 +138,6 @@ export async function launchCoin(options) {
   const description = requireField("Description", options.description?.trim() ?? "", LIMITS.description);
   const twitter = requireField("Twitter", options.twitter?.trim() ?? "", LIMITS.social);
   const website = requireField("Website", options.website?.trim() ?? "", LIMITS.social);
-  const buyText = (options.buy ?? "").trim();
-  const quoteIn = buyText ? parseEther(buyText) : 0n;
-  if (quoteIn < 0n) throw new Error("Initial buy amount is invalid.");
-  const minTokensOut = options.minTokens ? parseEther(options.minTokens) : 0n;
 
   const account = options.privateKey ? accountFromKey(options.privateKey).account : accountFromEnv();
   const say = (text) => {
@@ -197,7 +192,7 @@ export async function launchCoin(options) {
         description,
         twitter,
         website,
-        buy: quoteIn.toString(),
+        buy: "0",
         launchConfigId: launchConfigId.toString(),
       }),
     ),
@@ -225,24 +220,14 @@ export async function launchCoin(options) {
     args: [account.address, params, launchConfigId, pairToken],
   });
   const existing = await client.getCode({ address: token });
-  const native = pairToken.toLowerCase() === ZERO_ADDRESS;
-  const value = quoteIn > 0n ? platform.fee + (native ? quoteIn : 0n) : 0n;
-  const request =
-    quoteIn > 0n
-      ? {
-          address: factory,
-          abi,
-          functionName: "launchAndBuy",
-          args: [params, launchConfigId, pairToken, quoteIn, minTokensOut, account.address, []],
-          value,
-        }
-      : {
-          address: factory,
-          abi,
-          functionName: "launchToken",
-          args: [params, launchConfigId, pairToken],
-          value,
-        };
+  const value = 0n;
+  const request = {
+    address: factory,
+    abi,
+    functionName: "launchToken",
+    args: [params, launchConfigId, pairToken],
+    value,
+  };
 
   const balance = await client.getBalance({ address: account.address });
   const summary = {
@@ -254,7 +239,7 @@ export async function launchCoin(options) {
     curve,
     value: eth(value),
     balance: eth(balance),
-    buy: quoteIn > 0n ? eth(quoteIn) : "0 ETH",
+    buy: "none",
     alreadyLive: Boolean(existing && existing !== "0x"),
     coinUrl: `${API_ORIGIN}/coin/${token}`,
   };

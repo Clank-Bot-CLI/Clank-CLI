@@ -228,7 +228,6 @@ async function launchForm() {
     const image = clean(await rl.question("  Image path: "));
     const twitter = clean(await rl.question("  Twitter: "));
     const website = clean(await rl.question("  Website: "));
-    const buy = clean(await rl.question("  ETH to buy: "));
     const confirm = clean(await rl.question("\n  Type YES to send: "));
     if (confirm !== "YES") return "Transaction was not sent.";
     output.write("\n");
@@ -238,7 +237,6 @@ async function launchForm() {
       image,
       twitter,
       website,
-      buy,
       privateKey: wallet.privateKey,
       yes: true,
       onStatus: (text) => output.write(`${DIM}${text}${RESET}\n`),

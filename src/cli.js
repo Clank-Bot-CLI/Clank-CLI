@@ -22,10 +22,10 @@ Launch options:
   --twitter       X link, optional
   --website       Website link, optional
   --description   Description, optional
-  --buy           ETH to buy at launch, for example 0.01
-  --min-tokens    Minimum tokens out when using --buy. Default 0
   --salt          Fixed bytes32, optional
   --yes           Send the transaction. Without this flag the command only simulates
+
+Launch does not buy any tokens.
 
 Environment:
   CLANK_PRIVATE_KEY   Wallet private key that pays gas, 0x plus 64 hex characters
@@ -48,7 +48,7 @@ async function status() {
     `Launch config: ${platform.launchConfigId}`,
     `Launch enabled: ${platform.enabled ? "yes" : "no"}`,
     `Config enabled: ${platform.launchConfig.enabled ? "yes" : "no"}`,
-    `Launch fee when buying: ${eth(platform.fee)}`,
+    `Launch fee: ${eth(platform.fee)}`,
     `Curve fee: ${platform.launchConfig.curveFeeBps} bps`,
     `Supply: ${formatEther(platform.launchConfig.supply)}`,
     `Graduation threshold: ${formatEther(platform.launchConfig.graduationThreshold)} ETH`,
@@ -76,8 +76,6 @@ async function launch(values) {
     twitter: flag(values, "twitter"),
     website: flag(values, "website"),
     description: flag(values, "description"),
-    buy: flag(values, "buy"),
-    minTokens: flag(values, "min-tokens"),
     salt: flag(values, "salt"),
     yes: values.yes === true,
   });
@@ -88,7 +86,7 @@ async function launch(values) {
     `Predicted token: ${result.token}`,
     `Predicted curve: ${result.curve}`,
     `Page: ${result.coinUrl}`,
-    `Initial buy: ${result.buy}`,
+    `Initial buy: none`,
     `Transaction value: ${result.value}`,
     `Balance: ${result.balance}`,
   ];
@@ -129,8 +127,6 @@ async function main() {
         twitter: { type: "string" },
         website: { type: "string" },
         description: { type: "string" },
-        buy: { type: "string" },
-        "min-tokens": { type: "string" },
         salt: { type: "string" },
         yes: { type: "boolean", default: false },
       },
