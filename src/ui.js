@@ -25,12 +25,6 @@ function place(row, col, text) {
   output.write(`\x1b[${row};${col}H${text}${RESET}`);
 }
 
-function clip(text, width) {
-  const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
-  if (clean.length <= width) return text;
-  return `${clean.slice(0, width - 1)}…`;
-}
-
 function menuLines(selected, note) {
   const address = wallet ? short(wallet.account.address) : "not connected";
   const balance = wallet ? balanceText || "..." : "-";
@@ -49,11 +43,52 @@ function menuLines(selected, note) {
     `${DIM}Balance${RESET}`,
     `  ${DIM}${balance}${RESET}`,
     "",
-    note ? `${HOT}${clip(note, PANEL_W - 2)}${RESET}` : "",
+    ...wrapNote(note).map((line) => `${HOT}${line}${RESET}`),
     "",
     `${DIM}up/down    enter    q${RESET}`,
   );
   return lines;
+}
+
+function wrapNote(note) {
+  if (!note) return [];
+  const width = PANEL_W - 2;
+  const words = note.split(" ");
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > width && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function paintNotice() {
+  const rows = output.rows || 40;
+  const columns = output.columns || 100;
+  const notice = "Runs locally on your machine. Your private key never leaves this computer, and no third party can read it.";
+  const width = Math.max(40, columns - 4);
+  const words = notice.split(" ");
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (next.length > width && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  const start = Math.max(2, rows - lines.length);
+  lines.forEach((text, index) => place(start + index, 3, `${DIM}${text}${RESET}`));
 }
 
 function paint(selected, note) {
@@ -73,6 +108,7 @@ function paint(selected, note) {
       place(row, 4, line);
       row += 1;
     }
+    paintNotice();
     return;
   }
 
@@ -96,6 +132,7 @@ function paint(selected, note) {
       place(menuRow, imageLeft, line);
       menuRow += 1;
     }
+    paintNotice();
     return;
   }
 
@@ -109,6 +146,7 @@ function paint(selected, note) {
   for (let i = 0; i < menu.length; i += 1) {
     place(panelRow + i, panelLeft, menu[i]);
   }
+  paintNotice();
 }
 
 function row(index, selected, label) {
@@ -529,6 +567,10 @@ async function home() {
       if (note === "__quit__") return;
       await refreshBalance();
     } else if (selected === 1) {
+      if (!wallet) {
+        note = "Connect a wallet before launching a token.";
+        continue;
+      }
       note = await launchForm();
       if (note === "__quit__") return;
       await refreshBalance();
