@@ -7,7 +7,6 @@ import { portraitImage } from "./sixel.js";
 const PURPLE = "\x1b[38;2;186;140;255m";
 const DIM = "\x1b[38;2;150;140;170m";
 const HOT = "\x1b[38;2;244;236;255m";
-const GREEN = "\x1b[38;2;72;214;140m";
 const RESET = "\x1b[0m";
 
 let wallet = null;
@@ -70,18 +69,11 @@ function wrapNote(note) {
   return lines;
 }
 
-function paintNotice(left, width, top) {
-  const badge = ["╭──╮", "│✔ │", "╰──╯"];
-  const text = [
-    "Runs locally on your machine.",
-    "Your key stays here. No third party can read it.",
-  ];
-  const block = 4 + 3 + Math.max(...text.map((line) => line.length));
-  const col = left + Math.max(0, Math.floor((width - block) / 2));
-  const rows = output.rows || 40;
-  const start = Math.min(top, Math.max(2, rows - badge.length));
-  badge.forEach((line, index) => place(start + index, col, `${GREEN}${line}${RESET}`));
-  text.forEach((line, index) => place(start + index, col + 7, `${DIM}${line}${RESET}`));
+function paintNotice(left, width) {
+  const text = "Runs locally on your machine. Your key stays here. No third party can read it.";
+  const col = left + Math.max(0, Math.floor((width - text.length) / 2));
+  const row = Math.max(2, (output.rows || 40) - 1);
+  place(row, Math.max(1, col), `${DIM}${text}${RESET}`);
 }
 
 function paint(selected, note) {
@@ -101,7 +93,7 @@ function paint(selected, note) {
       place(row, 4, line);
       row += 1;
     }
-    paintNotice(2, Math.max(56, (output.columns || 100) - 4), row + 2);
+    paintNotice(2, Math.max(56, (output.columns || 100) - 4));
     return;
   }
 
@@ -125,7 +117,7 @@ function paint(selected, note) {
       place(menuRow, imageLeft, line);
       menuRow += 1;
     }
-    paintNotice(2, Math.max(56, (output.columns || 100) - 4), menuRow + 2);
+    paintNotice(2, Math.max(56, (output.columns || 100) - 4));
     return;
   }
 
@@ -139,8 +131,7 @@ function paint(selected, note) {
   for (let i = 0; i < menu.length; i += 1) {
     place(panelRow + i, panelLeft, menu[i]);
   }
-  const below = Math.max(imageRow + picture.rows, panelRow + menu.length) + 2;
-  paintNotice(imageLeft, picture.cols + GAP + PANEL_W, below);
+  paintNotice(imageLeft, picture.cols + GAP + PANEL_W);
 }
 
 function row(index, selected, label) {
