@@ -17,52 +17,107 @@ function short(address) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
+const PANEL_W = 34;
+const GAP = 4;
+
 let picture = null;
-const imageRow = 8;
+
+function place(row, col, text) {
+  output.write(`\x1b[${row};${col}H${text}${RESET}`);
+}
+
+function clip(text, width) {
+  const clean = text.replace(/\x1b\[[0-9;]*m/g, "");
+  if (clean.length <= width) return text;
+  return `${clean.slice(0, width - 1)}…`;
+}
 
 function menuLines(selected, note) {
+  const address = wallet ? short(wallet.account.address) : "not connected";
+  const balance = wallet ? balanceText || "..." : "-";
   return [
+    `${HOT}CLANK${RESET}`,
     `${DIM}Launch a coin on clank.trade${RESET}`,
     "",
-    row(0, selected, "1  Connect wallet"),
-    row(1, selected, "2  Launch token"),
+    row(0, selected, "Connect wallet"),
+    row(1, selected, "Launch token"),
     "",
-    wallet
-      ? `${DIM}Wallet${RESET}  ${HOT}${short(wallet.account.address)}${RESET}`
-      : `${DIM}Wallet${RESET}  not connected`,
-    wallet ? `${DIM}Balance${RESET}  ${balanceText || "..."}` : "",
+    `${DIM}Wallet${RESET}`,
+    `  ${wallet ? HOT : DIM}${address}${RESET}`,
+    `${DIM}Balance${RESET}`,
+    `  ${DIM}${balance}${RESET}`,
     "",
-    note ? `${HOT}${note}${RESET}` : "",
+    note ? `${HOT}${clip(note, PANEL_W - 2)}${RESET}` : "",
     "",
-    `${DIM}up/down select    Enter    q quit${RESET}`,
+    `${DIM}up/down    enter    q${RESET}`,
   ];
 }
 
 function paint(selected, note) {
+  const columns = output.columns || 100;
   const menu = menuLines(selected, note);
-  output.write(`\x1b[2J\x1b[H${RESET}`);
-  for (const line of LOGO) output.write(`${PURPLE}${line}${RESET}\n`);
-  output.write("\n");
+  const logoW = Math.max(...LOGO.map((line) => line.length));
+  output.write(`\x1b[2J\x1b[3J\x1b[H${RESET}`);
+
   if (!picture) {
-    for (const line of menu) output.write(`${line}\n`);
+    let row = 2;
+    for (const line of LOGO) {
+      place(row, 2, `${PURPLE}${line}`);
+      row += 1;
+    }
+    row += 2;
+    for (const line of menu) {
+      place(row, 4, line);
+      row += 1;
+    }
     return;
   }
-  const side = (output.columns || 100) >= picture.cols + 36;
-  output.write(picture.sixel);
-  if (!side) {
-    output.write("\n");
-    for (const line of menu) output.write(`${line}\n`);
+
+  const contentW = picture.cols + GAP + PANEL_W;
+  const frameW = Math.max(contentW, logoW);
+  const origin = Math.max(1, Math.floor((columns - frameW) / 2) + 1);
+  const stacked = columns < picture.cols + PANEL_W + 8;
+  let row = 2;
+  for (const line of LOGO) {
+    const logoLeft = origin + Math.floor((frameW - line.length) / 2);
+    place(row, Math.max(1, logoLeft), `${PURPLE}${line}`);
+    row += 1;
+  }
+  const imageRow = row + 1;
+
+  if (stacked) {
+    const imageLeft = Math.max(1, Math.floor((columns - picture.cols) / 2) + 1);
+    output.write(`\x1b[${imageRow};${imageLeft}H${picture.sixel}`);
+    let menuRow = imageRow + picture.rows + 2;
+    for (const line of menu) {
+      place(menuRow, imageLeft, line);
+      menuRow += 1;
+    }
     return;
   }
-  const col = picture.cols + 3;
+
+  const imageLeft = origin + Math.floor((frameW - contentW) / 2);
+  const panelLeft = imageLeft + picture.cols + GAP;
+  output.write(`\x1b[${imageRow};${imageLeft}H${picture.sixel}`);
+  for (let i = 0; i < picture.rows; i += 1) {
+    place(imageRow + i, imageLeft + picture.cols + 2, `${DIM}│`);
+  }
+  const panelRow = imageRow + Math.max(0, Math.floor((picture.rows - menu.length) / 2));
   for (let i = 0; i < menu.length; i += 1) {
-    output.write(`\x1b[${imageRow + i};${col}H${menu[i]}${RESET}`);
+    place(panelRow + i, panelLeft, menu[i]);
   }
 }
 
 function row(index, selected, label) {
-  if (index === selected) return `${HOT}> ${label}${RESET}`;
-  return `${DIM}  ${label}${RESET}`;
+  if (index === selected) return `${PURPLE}>${RESET}  ${HOT}${label}${RESET}`;
+  return `${DIM}   ${label}${RESET}`;
+}
+
+function openScreen(title, subtitle) {
+  output.write(`\x1b[2J\x1b[3J\x1b[H${RESET}`);
+  output.write(`\n  ${PURPLE}${title}${RESET}\n`);
+  output.write(`  ${DIM}${subtitle}${RESET}\n`);
+  output.write(`  ${DIM}${"─".repeat(32)}${RESET}\n\n`);
 }
 
 function readKey() {
@@ -145,11 +200,9 @@ function form() {
 }
 
 async function connect() {
-  output.write(`\x1b[2J\x1b[H${RESET}`);
-  output.write(`${PURPLE}Connect wallet${RESET}\n\n`);
-  output.write(`${DIM}Paste a private key. Each character is shown as *. Esc cancels.${RESET}\n`);
-  output.write(`${DIM}The key stays in this session only. It is not written to disk.${RESET}\n\n`);
-  const key = await readSecret(`${HOT}Private key${RESET}  `);
+  openScreen("Connect wallet", "The key stays in this session. Esc cancels.");
+  output.write(`  ${DIM}Each character is shown as *.${RESET}\n\n`);
+  const key = await readSecret(`  ${HOT}Private key${RESET}  `);
   if (!key) return "Connect cancelled.";
   try {
     const opened = accountFromKey(key);
@@ -167,18 +220,16 @@ function clean(value) {
 
 async function launchForm() {
   if (!wallet) return "Connect a wallet first.";
-  output.write(`\x1b[2J\x1b[H${RESET}`);
-  output.write(`${PURPLE}Launch token${RESET}\n`);
-  output.write(`${DIM}Wallet ${short(wallet.account.address)}  ${balanceText}${RESET}\n\n`);
+  openScreen("Launch token", `Wallet ${short(wallet.account.address)}   ${balanceText}`);
   const rl = form();
   try {
-    const name = clean(await rl.question("Coin name: "));
-    const symbol = clean(await rl.question("Ticker: "));
-    const image = clean(await rl.question("Image path (PNG, JPEG, WebP): "));
-    const twitter = clean(await rl.question("Twitter (leave empty to skip): "));
-    const website = clean(await rl.question("Website (leave empty to skip): "));
-    const buy = clean(await rl.question("ETH to buy (leave empty for 0): "));
-    const confirm = clean(await rl.question("\nType YES to send the transaction: "));
+    const name = clean(await rl.question("  Coin name: "));
+    const symbol = clean(await rl.question("  Ticker: "));
+    const image = clean(await rl.question("  Image path: "));
+    const twitter = clean(await rl.question("  Twitter: "));
+    const website = clean(await rl.question("  Website: "));
+    const buy = clean(await rl.question("  ETH to buy: "));
+    const confirm = clean(await rl.question("\n  Type YES to send: "));
     if (confirm !== "YES") return "Transaction was not sent.";
     output.write("\n");
     const result = await launchCoin({
@@ -193,10 +244,10 @@ async function launchForm() {
       onStatus: (text) => output.write(`${DIM}${text}${RESET}\n`),
     });
     output.write("\n");
-    output.write(`${HOT}${result.name} ($${result.symbol})${RESET}\n`);
-    output.write(`Token  ${result.token}\n`);
-    output.write(`Page   ${result.coinUrl}\n`);
-    if (result.txUrl) output.write(`Tx     ${result.txUrl}\n`);
+    output.write(`  ${HOT}${result.name} ($${result.symbol})${RESET}\n`);
+    output.write(`  Token  ${result.token}\n`);
+    output.write(`  Page   ${result.coinUrl}\n`);
+    if (result.txUrl) output.write(`  Tx     ${result.txUrl}\n`);
     if (result.reason) output.write(`${result.reason}\n`);
     if (result.sent) output.write("Launch is onchain.\n");
     await rl.question("\nPress Enter to return.");
@@ -267,9 +318,8 @@ async function loadPicture() {
   const cell = cellReply.match(/\x1b\[6;(\d+);(\d+)t/);
   const cellH = Math.max(1, cell ? Number(cell[1]) : 20);
   const cellW = Math.max(1, cell ? Number(cell[2]) : 10);
-  const maxPxH = Math.max(80, ((output.rows || 40) - 12) * cellH);
-  const maxPxW = Math.max(80, ((output.columns || 100) - 38) * cellW);
-  const image = portraitImage(maxPxW, maxPxH);
+  const edge = Math.min(260, 22 * cellW, 16 * cellH);
+  const image = portraitImage(edge, edge);
   picture = {
     sixel: image.sixel,
     cols: Math.max(1, Math.ceil(image.width / cellW)),
