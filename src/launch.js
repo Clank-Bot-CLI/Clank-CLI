@@ -130,6 +130,24 @@ export async function readPlatform() {
   return { config, client, factory, launchConfigId, enabled, fee, launchConfig, chainId };
 }
 
+function explainLaunchError(error, balance) {
+  const message = error?.shortMessage || error?.message || String(error);
+  if (/exceeds the balance|insufficient funds/i.test(message)) {
+    return `Not enough ETH on Robinhood Chain for gas. Balance is ${eth(balance)}. Add about 0.0003 ETH on chain 4663, then launch again.`;
+  }
+  if (message.includes("ENOENT")) return "Image file was not found. Use the full path to a PNG, JPEG, or WebP file.";
+  return message;
+}
+
+async function rememberError(message) {
+  try {
+    await mkdir(attemptDir, { recursive: true });
+    await writeFile(path.join(attemptDir, "last-error.txt"), `${new Date().toISOString()}\n${message}\n`);
+  } catch {
+    // The launch error is still shown on screen.
+  }
+}
+
 export async function launchCoin(options) {
   const name = requireField("Coin name", options.name?.trim(), LIMITS.name, { required: true });
   const symbol = requireField("Ticker", options.symbol?.trim().toUpperCase(), LIMITS.symbol, {
@@ -157,10 +175,21 @@ export async function launchCoin(options) {
     args: [account.address],
   });
   if (!allowed) throw new Error(`Wallet ${account.address} is not allowed to launch on this factory.`);
+  const balance = await client.getBalance({ address: account.address });
+  if (balance === 0n) {
+    const reason = "This wallet has 0 ETH on Robinhood Chain. Launch needs about 0.0003 ETH for gas.";
+    await rememberError(reason);
+    throw new Error(reason);
+  }
 
   let logo = options.logo?.trim() ?? "";
   if (options.image) {
-    const bytes = new Uint8Array(await readFile(options.image));
+    let bytes;
+    try {
+      bytes = new Uint8Array(await readFile(options.image));
+    } catch {
+      throw new Error(`Image file was not found: ${options.image}`);
+    }
     if (bytes.length === 0 || bytes.length > LIMITS.imageBytes) {
       throw new Error("Image must be 2 MB or smaller.");
     }
@@ -229,7 +258,6 @@ export async function launchCoin(options) {
     value,
   };
 
-  const balance = await client.getBalance({ address: account.address });
   const summary = {
     wallet: account.address,
     name,
@@ -253,8 +281,9 @@ export async function launchCoin(options) {
   try {
     gas = await client.estimateContractGas({ ...request, account: account.address });
   } catch (error) {
-    const message = error?.shortMessage || error?.message || String(error);
-    return { ...summary, sent: false, simulated: false, reason: message };
+    const message = explainLaunchError(error, balance);
+    await rememberError(message);
+    return { ...summary, sent: false, simulated: false, reason: message, balance: eth(balance) };
   }
   summary.gas = (gas * 120n) / 100n;
   summary.simulated = true;
@@ -267,7 +296,7 @@ export async function launchCoin(options) {
   const maxFee = fees.maxFeePerGas ?? fees.gasPrice ?? 0n;
   const required = value + summary.gas * maxFee;
   if (balance < required) {
-    throw new Error(`Not enough ETH for value and gas. Need about ${eth(required)}, balance is ${eth(balance)}.`);
+    throw new Error(`Not enough ETH on Robinhood Chain for gas. Need about ${eth(required)}. Balance is ${eth(balance)}.`);
   }
 
   const { createWalletClient } = await import("viem");
@@ -280,7 +309,7 @@ export async function launchCoin(options) {
   const hash = await wallet.writeContract({ ...request, gas: summary.gas });
   await writeAttempt(fingerprint, { salt, token, curve, logo, hash, done: false });
   say(`Sent ${hash}. Waiting for confirmation...`);
-  const receipt = await client.waitForTransactionReceipt({ hash, timeout: 60_000 });
+  const receipt = await client.waitForTransactionReceipt({ hash, timeout: 120_000 });
   let launchedToken = token;
   for (const log of receipt.logs) {
     if (log.address.toLowerCase() !== factory.toLowerCase()) continue;

@@ -139,6 +139,7 @@ function readKey() {
 
 function readSecret(prompt) {
   return new Promise((resolve) => {
+    drainInput();
     output.write(prompt);
     input.setRawMode(true);
     input.resume();
@@ -193,8 +194,16 @@ async function refreshBalance() {
   }
 }
 
-function form() {
+function drainInput() {
+  if (!input.isTTY) return;
   input.setRawMode(false);
+  input.resume();
+  while (input.read() !== null) {}
+  input.pause();
+}
+
+function form() {
+  drainInput();
   input.resume();
   return readline.createInterface({ input, output, terminal: true });
 }
@@ -229,7 +238,8 @@ async function launchForm() {
     const twitter = clean(await rl.question("  Twitter: "));
     const website = clean(await rl.question("  Website: "));
     const confirm = clean(await rl.question("\n  Type YES to send: "));
-    if (confirm !== "YES") return "Transaction was not sent.";
+    if (confirm.toUpperCase() !== "YES") return "Transaction was not sent.";
+    if (!name || !symbol || !image) return "Name, ticker, and image path are required.";
     output.write("\n");
     const result = await launchCoin({
       name,
