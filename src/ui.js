@@ -69,11 +69,11 @@ function wrapNote(note) {
   return lines;
 }
 
-function paintNotice(left, width) {
+function paintNotice(origin, frameW) {
   const text = "Runs locally on your machine. Your key stays here. No third party can read it.";
-  const col = left + Math.max(0, Math.floor((width - text.length) / 2));
+  const col = Math.max(1, origin + Math.floor((frameW - text.length) / 2));
   const row = Math.max(2, (output.rows || 40) - 1);
-  place(row, Math.max(1, col), `${DIM}${text}${RESET}`);
+  place(row, col, `${DIM}${text}${RESET}`);
 }
 
 function paint(selected, note) {
@@ -93,7 +93,7 @@ function paint(selected, note) {
       place(row, 4, line);
       row += 1;
     }
-    paintNotice(2, Math.max(56, (output.columns || 100) - 4));
+    paintNotice(1, output.columns || 100);
     return;
   }
 
@@ -117,7 +117,7 @@ function paint(selected, note) {
       place(menuRow, imageLeft, line);
       menuRow += 1;
     }
-    paintNotice(2, Math.max(56, (output.columns || 100) - 4));
+    paintNotice(1, output.columns || 100);
     return;
   }
 
@@ -131,7 +131,7 @@ function paint(selected, note) {
   for (let i = 0; i < menu.length; i += 1) {
     place(panelRow + i, panelLeft, menu[i]);
   }
-  paintNotice(imageLeft, picture.cols + GAP + PANEL_W);
+  paintNotice(origin, frameW);
 }
 
 function row(index, selected, label) {
