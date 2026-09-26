@@ -1,0 +1,15 @@
+{
+  "name": "clank-trade-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "clank-trade": "./src/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "viem": "^2.37.9"
+  }
+}
