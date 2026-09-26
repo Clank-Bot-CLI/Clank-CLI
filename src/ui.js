@@ -162,56 +162,148 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function askStep({ title, subtitle, label, value, secret, step, total }) {
-  let text = value ?? "";
-  let focus = 0;
-  let hint = "";
-  while (true) {
-    openScreen(title, `${subtitle}    step ${step} of ${total}`);
-    const shown = secret ? "*".repeat(Math.min(text.length, 48)) : text;
-    const fieldColor = focus === 0 ? HOT : DIM;
-    output.write(`  ${DIM}${label}${RESET}\n`);
-    output.write(`  ${focus === 0 ? PURPLE + ">" : " "}  ${fieldColor}${shown || `${DIM}type here`}${RESET}\n\n`);
-    output.write(`  ${row(1, focus, "Back")}\n`);
-    output.write(`  ${row(2, focus, "Home")}\n\n`);
-    if (hint) output.write(`  ${hint}\n\n`);
-    output.write(`  ${DIM}up/down move    enter select${RESET}\n`);
-    drainInput();
-    const key = await readKey();
-    if (key === "\u0003") return { action: "quit", value: text };
-    if (focus === 0 && (key === "\r" || key === "\n")) return { action: "next", value: text.trim() };
-    if (key === "\u001b[A") focus = focus === 0 ? 0 : focus - 1;
-    else if (key === "\u001b[B") focus = Math.min(2, focus + 1);
-    else if (focus === 1 && (key === "\r" || key === "\n")) return { action: "back", value: text };
-    else if (focus === 2 && (key === "\r" || key === "\n")) return { action: "home", value: text };
-    else if (focus === 0 && (key === "\u007f" || key === "\b")) text = text.slice(0, -1);
-    else if (focus === 0 && key === "\u001b") return { action: "back", value: text };
-    else if (focus === 0 && key && !key.startsWith("\u001b")) {
-      const cut = key.search(/[\r\n]/);
-      text += (cut >= 0 ? key.slice(0, cut) : key).replace(/[\u0000-\u001f]/g, "");
-      if (cut >= 0) return { action: "next", value: text.trim() };
-    } else if (!key.startsWith("\u001b")) hint = "";
+function enableDirectKeys(on) {
+  output.write(on ? "\x1b[?9001h" : "\x1b[?9001l");
+}
+
+function readInputChunk() {
+  return new Promise((resolve) => {
+    let buf = "";
+    let timer = null;
+    const finish = () => {
+      if (timer) clearTimeout(timer);
+      input.off("data", onData);
+      input.setRawMode(false);
+      input.pause();
+      resolve(buf);
+    };
+    const ready = () => {
+      if (!buf.startsWith("\u001b")) return true;
+      if (buf.includes("_")) return true;
+      return /\u001b\[[0-9;]*[A-Za-z~]$/.test(buf);
+    };
+    const onData = (chunk) => {
+      buf += chunk;
+      if (timer) clearTimeout(timer);
+      if (ready()) finish();
+      else timer = setTimeout(finish, 40);
+    };
+    input.setRawMode(true);
+    input.resume();
+    input.setEncoding("utf8");
+    input.on("data", onData);
+  });
+}
+
+function decodeKeys(buf) {
+  const keys = [];
+  let i = 0;
+  while (i < buf.length) {
+    if (buf.startsWith("\u001b[", i)) {
+      const end = buf.indexOf("_", i);
+      if (end > i && /^\u001b\[\d/.test(buf.slice(i, end))) {
+        const parts = buf.slice(i + 2, end).split(";");
+        if (parts.length >= 4) {
+          keys.push({
+            vk: Number(parts[0]),
+            unicode: Number(parts[2]),
+            down: parts[3] === "1",
+            control: Number(parts[4] || 0),
+          });
+          i = end + 1;
+          continue;
+        }
+      }
+      const match = buf.slice(i).match(/^\u001b\[([0-9;]*)([A-Za-z~])/);
+      if (match) {
+        keys.push({ plain: `\u001b[${match[1]}${match[2]}` });
+        i += match[0].length;
+        continue;
+      }
+    }
+    keys.push({ plain: buf[i] });
+    i += 1;
+  }
+  return keys;
+}
+
+function actionFromKey(key, allowSkip) {
+  if (key.vk) {
+    if (!key.down) return null;
+    if ((key.control & 0x000c) && key.vk === 67) return "quit";
+    if (key.vk === 16 || key.vk === 160 || key.vk === 161) return allowSkip ? "skip" : null;
+    if (key.vk === 84) return "back";
+    if (key.vk === 81) return "home";
+    if (key.vk === 13) return "next";
+    if (key.vk === 8) return "backspace";
+    if (key.unicode >= 32 && key.vk !== 84 && key.vk !== 81) {
+      return { type: "text", char: String.fromCharCode(key.unicode) };
+    }
+    return null;
+  }
+  const plain = key.plain;
+  if (!plain) return null;
+  if (plain === "\u0003") return "quit";
+  if (plain === "t" || plain === "T") return "back";
+  if (plain === "q" || plain === "Q") return "home";
+  if (plain === "\r" || plain === "\n") return "next";
+  if (plain === "\b" || plain === "\u007f") return "backspace";
+  if (allowSkip && (plain === "\u0010" || plain === "\u001b[16;2u")) return "skip";
+  if (plain.length === 1 && plain >= " ") return { type: "text", char: plain };
+  return null;
+}
+
+async function readActions(allowSkip) {
+  const buf = await readInputChunk();
+  if (!buf.includes("\u001b") && buf.length > 1) {
+    return [...buf.replace(/[\u0000-\u001f]/g, "")].map((char) => ({ type: "text", char }));
+  }
+  return decodeKeys(buf).map((key) => actionFromKey(key, allowSkip)).filter(Boolean);
+}
+
+async function askStep({ title, subtitle, label, value, secret, step, total, allowSkip, fixed }) {
+  let text = fixed ? "0" : value ?? "";
+  enableDirectKeys(true);
+  try {
+    while (true) {
+      openScreen(title, `${subtitle}    step ${step} of ${total}`);
+      const shown = secret ? "*".repeat(Math.min(text.length, 48)) : text;
+      output.write(`  ${DIM}${label}${RESET}\n`);
+      output.write(`  ${PURPLE}>${RESET}  ${HOT}${shown || `${DIM}type here`}${RESET}\n\n`);
+      output.write(`  ${DIM}T back    Q home${RESET}\n`);
+      if (allowSkip) output.write(`  ${DIM}Press Shift to skip this step.${RESET}\n`);
+      if (fixed) output.write(`  ${DIM}ETH to buy stays 0.${RESET}\n`);
+      drainInput();
+      const actions = await readActions(allowSkip);
+      for (const action of actions) {
+        if (action === "quit") return { action: "quit", value: text };
+        if (action === "back") return { action: "back", value: text };
+        if (action === "home") return { action: "home", value: text };
+        if (action === "skip") return { action: "skip", value: fixed ? "0" : "" };
+        if (action === "next") return { action: "next", value: (fixed ? "0" : text).trim() };
+        if (action === "backspace" && !fixed) text = text.slice(0, -1);
+        else if (action?.type === "text" && !fixed) text += action.char;
+      }
+    }
+  } finally {
+    enableDirectKeys(false);
   }
 }
 
-async function waitChoice(success) {
-  let focus = success ? 2 : 1;
-  const draw = () => {
-    output.write(`\x1b[2K  ${row(1, focus, "Back")}\n`);
-    output.write(`\x1b[2K  ${row(2, focus, "Home")}\n`);
-  };
-  output.write("\n");
-  draw();
-  while (true) {
-    const key = await readKey();
-    if (key === "\u0003") return "quit";
-    if (key === "\u001b[A") focus = 1;
-    else if (key === "\u001b[B") focus = 2;
-    else if (key === "\r" || key === "\n" || key === "\u001b") {
-      return focus === 2 && key !== "\u001b" ? "home" : "back";
+async function waitKeys() {
+  output.write(`\n  ${DIM}T back    Q home${RESET}\n`);
+  enableDirectKeys(true);
+  try {
+    while (true) {
+      const actions = await readActions(false);
+      for (const action of actions) {
+        if (action === "quit") return "quit";
+        if (action === "back") return "back";
+        if (action === "home") return "home";
+      }
     }
-    output.write("\x1b[2A");
-    draw();
+  } finally {
+    enableDirectKeys(false);
   }
 }
 
@@ -251,7 +343,7 @@ async function connect() {
       return "private key accepted";
     });
     if (!keyCheck.ok) {
-      const next = await waitChoice(false);
+      const next = await waitKeys();
       if (next === "quit") return "__quit__";
       if (next === "home") return "Connect cancelled.";
       continue;
@@ -268,7 +360,7 @@ async function connect() {
     });
     if (!chainCheck.ok || !balanceCheck.ok) {
       output.write(`  ${DIM}Connection failed.${RESET}\n`);
-      const next = await waitChoice(false);
+      const next = await waitKeys();
       if (next === "quit") return "__quit__";
       if (next === "home") return "Connect cancelled.";
       continue;
@@ -276,7 +368,7 @@ async function connect() {
     wallet = opened;
     balanceText = balanceCheck.detail;
     output.write(`  ${HOT}Connection successful.${RESET}\n`);
-    const next = await waitChoice(true);
+    const next = await waitKeys();
     if (next === "quit") return "__quit__";
     if (next === "back") {
       wallet = null;
@@ -293,11 +385,12 @@ async function launchForm() {
     { id: "name", label: "Coin name", required: true },
     { id: "symbol", label: "Ticker", required: true },
     { id: "image", label: "Image path", required: true },
-    { id: "twitter", label: "Twitter", required: false },
-    { id: "website", label: "Website", required: false },
+    { id: "twitter", label: "Twitter", required: false, skip: true },
+    { id: "website", label: "Website", required: false, skip: true },
+    { id: "buy", label: "ETH to buy", fixed: true, skip: true },
     { id: "confirm", label: "Type YES to send", required: true },
   ];
-  const draft = { name: "", symbol: "", image: "", twitter: "", website: "", confirm: "" };
+  const draft = { name: "", symbol: "", image: "", twitter: "", website: "", buy: "0", confirm: "" };
   let index = 0;
   while (index < steps.length) {
     const current = steps[index];
@@ -305,9 +398,11 @@ async function launchForm() {
       title: "Launch token",
       subtitle: short(wallet.account.address),
       label: current.label,
-      value: draft[current.id],
+      value: current.fixed ? "0" : draft[current.id],
       step: index + 1,
       total: steps.length,
+      allowSkip: current.id !== "confirm",
+      fixed: Boolean(current.fixed),
     });
     if (step.action === "quit") return "__quit__";
     if (step.action === "home") return "Returned home.";
@@ -316,7 +411,12 @@ async function launchForm() {
       index -= 1;
       continue;
     }
-    const value = current.id === "symbol" ? step.value.toUpperCase() : step.value;
+    if (step.action === "skip") {
+      draft[current.id] = current.fixed ? "0" : "";
+      index += 1;
+      continue;
+    }
+    const value = current.fixed ? "0" : current.id === "symbol" ? step.value.toUpperCase() : step.value;
     if (current.required && !value) continue;
     if (current.id === "confirm" && value.toUpperCase() !== "YES") continue;
     draft[current.id] = value;
@@ -342,14 +442,14 @@ async function launchForm() {
     if (result.txUrl) output.write(`  Tx     ${result.txUrl}\n`);
     if (result.reason) output.write(`  ${result.reason}\n`);
     if (result.sent) output.write(`  ${HOT}Launch successful.${RESET}\n`);
-    const next = await waitChoice(Boolean(result.sent));
+    const next = await waitKeys();
     if (next === "quit") return "__quit__";
     if (next === "back") return "Returned to launch.";
     return result.sent ? "Launch is onchain." : result.reason || "Transaction was not sent.";
   } catch (error) {
     const message = error?.shortMessage || error?.message || String(error);
     output.write(`\n  ${message}\n`);
-    const next = await waitChoice(false);
+    const next = await waitKeys();
     if (next === "quit") return "__quit__";
     return message;
   }
