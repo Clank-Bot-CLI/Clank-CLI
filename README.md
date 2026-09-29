@@ -33,24 +33,39 @@ The factory launch fee is **0 ETH**. The CLI does **not** buy any tokens when it
 1. Download the current Node.js 20 LTS installer from [https://nodejs.org](https://nodejs.org).
 2. Run the installer and leave **npm** enabled.
 3. Close every open terminal, then open a new one.
-4. Check the install:
+4. Check Node:
 
 ```powershell
 node -v
-npm -v
 ```
 
-`node -v` should print `v20` or higher.
+`node -v` should print `v20` or higher. Do not type `npm -v` yet. A new Windows install blocks `npm` until the next step.
 
 ## 2. Install clank-trade
 
-In that new terminal:
+Windows PowerShell refuses to run `npm.ps1` while scripts are disabled. The install then stops with this message and downloads nothing:
+
+```text
+npm.ps1 cannot be loaded because running scripts is disabled on this system.
+```
+
+In that new terminal, run this once. It allows local scripts for your Windows user only:
 
 ```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+npm -v
 npm install -g github:Clank-Bot-CLI/Clank-CLI
 ```
 
-npm clones the repository, installs the library it needs, and adds the `clank-trade` command.
+`npm -v` should print a version number. npm then clones the repository, installs the library it needs, and adds the `clank-trade` command.
+
+The same policy also lets PowerShell start `clank-trade`. Without it, opening the app fails on `clank-trade.ps1` with the same scripts-disabled error.
+
+If a company policy rejects `Set-ExecutionPolicy`, install with the command program instead:
+
+```powershell
+npm.cmd install -g github:Clank-Bot-CLI/Clank-CLI
+```
 
 If Windows says the command is not recognized, close the terminal, open a new one, and try again. The global npm folder must be on your `PATH`. You can see that folder with:
 
@@ -58,10 +73,18 @@ If Windows says the command is not recognized, close the terminal, open a new on
 npm prefix -g
 ```
 
+If `npm` is still blocked, use `npm.cmd prefix -g`.
+
 ## 3. Open the app
 
 ```powershell
 clank-trade
+```
+
+If that prints `clank-trade.ps1 cannot be loaded because running scripts is disabled on this system`, the policy command in the previous step did not apply. Open the app with:
+
+```powershell
+clank-trade.cmd
 ```
 
 You should see the home screen in the picture above.
@@ -182,6 +205,8 @@ The home screen shortens the same point to one line:
 
 | What you see | What to do |
 | --- | --- |
+| `npm.ps1 cannot be loaded because running scripts is disabled on this system` | Run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force`, then run `npm install -g github:Clank-Bot-CLI/Clank-CLI` again. If policy is locked, run `npm.cmd install -g github:Clank-Bot-CLI/Clank-CLI`. |
+| `clank-trade.ps1 cannot be loaded because running scripts is disabled on this system` | Run the same `Set-ExecutionPolicy` command, open a new terminal, then run `clank-trade`. If policy is locked, run `clank-trade.cmd`. |
 | `clank-trade` is not recognized | Open a new terminal after `npm install -g`. Check `npm prefix -g` is on `PATH`. |
 | Connect a wallet before launching a token | Connect a wallet first, then open Launch token. |
 | Logo is required | Pass a real image path. An empty logo is rejected. |
